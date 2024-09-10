@@ -1,4 +1,4 @@
-from datasience_methods.utils import similarity_merge
+from src.datasience_methods.utils import similarity_merge
 import pytest
 import pandas as pd
 

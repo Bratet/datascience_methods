@@ -11,7 +11,8 @@ def similarity_merge(
     right_on: Union[str, List[str]],
     thresholds: Union[float, Dict[str, float]],
     method: Union[str, Callable] = 'token_sort_ratio',
-    limit: int = None
+    limit: int = None,
+    best_match: bool = False
 ) -> pd.DataFrame:
     """
     Merge two DataFrames based on similarity between specified columns.
@@ -24,6 +25,7 @@ def similarity_merge(
         thresholds (float or Dict[str, float]): Similarity threshold(s)
         method (str or Callable): Fuzzy matching method or custom function
         limit (int, optional): Max number of matches per left row
+        best_match (bool): If True, return only the best match for each left row
 
     Returns:
         pd.DataFrame: Merged DataFrame
@@ -48,7 +50,7 @@ def similarity_merge(
 
     merged_rows = []
 
-    for _, left_row in left_df.iterrows():
+    for _, (_, left_row) in enumerate(left_df.iterrows()):
         matches = []
         for _, right_row in right_df.iterrows():
             column_similarities = []
@@ -63,7 +65,10 @@ def similarity_merge(
                 matches.append((match_score, right_row))
 
         matches.sort(key=lambda x: x[0], reverse=True)
-        if limit:
+        
+        if best_match:
+            matches = matches[:1]
+        elif limit:
             matches = matches[:limit]
 
         for match_score, right_row in matches:
@@ -72,7 +77,6 @@ def similarity_merge(
 
     result_df = pd.DataFrame(merged_rows)
 
-    # Remove duplicate columns
     result_df = result_df.loc[:, ~result_df.columns.duplicated()]
 
     return result_df
@@ -112,5 +116,16 @@ def get_similarity_function(method: Union[str, Callable]) -> Callable:
 #     right_on=['company_name', 'company_address'],
 #     thresholds={'name': 0.8, 'address': 0.7},
 #     method='token_sort_ratio',
-#     limit=3
+#     limit=3,
+#     best_match=False
+# )
+
+# For best match only:
+# result_best = similarity_merge(
+#     left_df, right_df,
+#     left_on=['name', 'address'],
+#     right_on=['company_name', 'company_address'],
+#     thresholds={'name': 0.8, 'address': 0.7},
+#     method='token_sort_ratio',
+#     best_match=True
 # )
