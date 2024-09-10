@@ -1,25 +1,21 @@
 from setuptools import setup, find_packages
-from src.datasience_methods import __version__
 
 # Read the contents of your README file
 from pathlib import Path
 this_directory = Path(__file__).parent
 long_description = (this_directory / "README.md").read_text()
 
-# Import the version
-import re
-VERSIONFILE = "src/datasience_methods/__init__.py"
-verstrline = open(VERSIONFILE, "rt").read()
-VSRE = r"^__version__ = ['\"]([^'\"]*)['\"]"
-mo = re.search(VSRE, verstrline, re.M)
-if mo:
-    version = mo.group(1)
-else:
-    raise RuntimeError(f"Unable to find version string in {VERSIONFILE}.")
+# Get version without importing the package
+def get_version():
+    with open('src/datasience_methods/__init__.py', 'r') as f:
+        for line in f:
+            if line.startswith('__version__'):
+                return line.split('=')[1].strip().strip('"').strip("'")
+    raise RuntimeError('Unable to find version string.')
 
 setup(
     name="datasience_methods",
-    version=__version__,
+    version=get_version(),
     author="Bratet",
     author_email="ahmedmrabet.002@gmail.com",
     description="A collection of useful data science methods",
