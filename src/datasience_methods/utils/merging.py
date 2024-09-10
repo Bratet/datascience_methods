@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from typing import Union, List, Dict, Callable
 from fuzzywuzzy import fuzz
 import jellyfish
@@ -11,25 +12,8 @@ def similarity_merge(
     right_on: Union[str, List[str]],
     thresholds: Union[float, Dict[str, float]],
     method: Union[str, Callable] = 'token_sort_ratio',
-    limit: int = None,
-    best_match: bool = False
+    limit: int = None
 ) -> pd.DataFrame:
-    """
-    Merge two DataFrames based on similarity between specified columns.
-
-    Args:
-        left_df (pd.DataFrame): Left DataFrame
-        right_df (pd.DataFrame): Right DataFrame
-        left_on (str or List[str]): Column(s) from left_df to use for matching
-        right_on (str or List[str]): Column(s) from right_df to use for matching
-        thresholds (float or Dict[str, float]): Similarity threshold(s)
-        method (str or Callable): Fuzzy matching method or custom function
-        limit (int, optional): Max number of matches per left row
-        best_match (bool): If True, return only the best match for each left row
-
-    Returns:
-        pd.DataFrame: Merged DataFrame
-    """
     if isinstance(left_on, str):
         left_on = [left_on]
     if isinstance(right_on, str):
@@ -48,35 +32,37 @@ def similarity_merge(
 
     similarity_func = get_similarity_function(method)
 
-    merged_rows = []
+    # Pre-compute all similarity scores
+    similarity_matrices = []
+    for left_col, right_col in zip(left_on, right_on):
+        left_values = left_df[left_col].astype(str).values
+        right_values = right_df[right_col].astype(str).values
+        similarity_matrix = np.vectorize(similarity_func)(left_values[:, np.newaxis], right_values)
+        similarity_matrices.append(similarity_matrix)
 
-    for _, (_, left_row) in enumerate(left_df.iterrows()):
-        matches = []
-        for _, right_row in right_df.iterrows():
-            column_similarities = []
-            for left_col, right_col in zip(left_on, right_on):
-                col_similarity = similarity_func(str(left_row[left_col]), str(right_row[right_col]))
-                column_similarities.append(col_similarity)
+    # Combine similarity scores
+    combined_similarity = np.mean(similarity_matrices, axis=0)
 
-            # Check if all column similarities meet their respective thresholds
-            if all(sim >= thresholds[col] for sim, col in zip(column_similarities, left_on)):
-                # Calculate average similarity as the match score
-                match_score = sum(column_similarities) / len(column_similarities)
-                matches.append((match_score, right_row))
+    # Apply thresholds
+    threshold_mask = np.all([sim >= thresholds[col] for sim, col in zip(similarity_matrices, left_on)], axis=0)
+    combined_similarity[~threshold_mask] = 0
 
-        matches.sort(key=lambda x: x[0], reverse=True)
-        
-        if best_match:
-            matches = matches[:1]
-        elif limit:
-            matches = matches[:limit]
+    # Get top matches
+    if limit:
+        top_indices = np.argpartition(-combined_similarity, limit, axis=1)[:, :limit]
+        row_indices = np.arange(combined_similarity.shape[0])[:, np.newaxis]
+        top_similarities = combined_similarity[row_indices, top_indices]
+    else:
+        top_indices = np.argwhere(combined_similarity > 0)
+        top_similarities = combined_similarity[top_indices[:, 0], top_indices[:, 1]]
 
-        for match_score, right_row in matches:
-            merged_row = {**left_row.to_dict(), **right_row.to_dict(), 'similarity_score': match_score}
-            merged_rows.append(merged_row)
+    # Create merged DataFrame
+    left_data = left_df.iloc[top_indices[:, 0]].reset_index(drop=True)
+    right_data = right_df.iloc[top_indices[:, 1]].reset_index(drop=True)
+    result_df = pd.concat([left_data, right_data], axis=1)
+    result_df['similarity_score'] = top_similarities.flatten()
 
-    result_df = pd.DataFrame(merged_rows)
-
+    # Remove duplicate columns
     result_df = result_df.loc[:, ~result_df.columns.duplicated()]
 
     return result_df
@@ -116,16 +102,5 @@ def get_similarity_function(method: Union[str, Callable]) -> Callable:
 #     right_on=['company_name', 'company_address'],
 #     thresholds={'name': 0.8, 'address': 0.7},
 #     method='token_sort_ratio',
-#     limit=3,
-#     best_match=False
-# )
-
-# For best match only:
-# result_best = similarity_merge(
-#     left_df, right_df,
-#     left_on=['name', 'address'],
-#     right_on=['company_name', 'company_address'],
-#     thresholds={'name': 0.8, 'address': 0.7},
-#     method='token_sort_ratio',
-#     best_match=True
+#     limit=3
 # )
