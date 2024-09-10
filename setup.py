@@ -39,7 +39,7 @@ setup(
         "fuzzywuzzy>=0.18.0",
         "python-Levenshtein>=0.12.0",
         "jellyfish==0.9.0",
-        "scipy==1.12.0"
+        "scipy>=1.7"
     ],
     extras_require={
         "dev": ["pytest>=6.0", "pytest-cov>=2.0"],
