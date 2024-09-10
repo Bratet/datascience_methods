@@ -49,18 +49,31 @@ def similarity_merge(
 
     # Get top matches
     if limit:
-        top_indices = np.argpartition(-combined_similarity, limit, axis=1)[:, :limit]
+        top_k = min(limit, combined_similarity.shape[1])
+        top_indices = np.argpartition(-combined_similarity, top_k, axis=1)[:, :top_k]
         row_indices = np.arange(combined_similarity.shape[0])[:, np.newaxis]
         top_similarities = combined_similarity[row_indices, top_indices]
+        
+        # Flatten the indices and similarities
+        left_indices = np.repeat(np.arange(len(left_df)), top_k)
+        right_indices = top_indices.flatten()
+        similarities = top_similarities.flatten()
+        
+        # Remove pairs with zero similarity
+        mask = similarities > 0
+        left_indices = left_indices[mask]
+        right_indices = right_indices[mask]
+        similarities = similarities[mask]
     else:
-        top_indices = np.argwhere(combined_similarity > 0)
-        top_similarities = combined_similarity[top_indices[:, 0], top_indices[:, 1]]
+        nonzero_indices = np.nonzero(combined_similarity)
+        left_indices, right_indices = nonzero_indices
+        similarities = combined_similarity[nonzero_indices]
 
     # Create merged DataFrame
-    left_data = left_df.iloc[top_indices[:, 0]].reset_index(drop=True)
-    right_data = right_df.iloc[top_indices[:, 1]].reset_index(drop=True)
+    left_data = left_df.iloc[left_indices].reset_index(drop=True)
+    right_data = right_df.iloc[right_indices].reset_index(drop=True)
     result_df = pd.concat([left_data, right_data], axis=1)
-    result_df['similarity_score'] = top_similarities.flatten()
+    result_df['similarity_score'] = similarities
 
     # Remove duplicate columns
     result_df = result_df.loc[:, ~result_df.columns.duplicated()]
