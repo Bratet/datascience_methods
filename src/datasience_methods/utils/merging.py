@@ -4,6 +4,8 @@ from typing import Union, List, Dict, Callable
 from fuzzywuzzy import fuzz
 import jellyfish
 from difflib import SequenceMatcher
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import maximum_bipartite_matching
 
 def similarity_merge(
     left_df: pd.DataFrame,
@@ -32,12 +34,20 @@ def similarity_merge(
 
     similarity_func = get_similarity_function(method)
 
-    # Pre-compute all similarity scores
+    # Pre-compute all similarity scores using chunking
+    chunk_size = 1000  # Adjust based on available memory
+    num_left = len(left_df)
+    num_right = len(right_df)
+    
     similarity_matrices = []
     for left_col, right_col in zip(left_on, right_on):
-        left_values = left_df[left_col].astype(str).values
-        right_values = right_df[right_col].astype(str).values
-        similarity_matrix = np.vectorize(similarity_func)(left_values[:, np.newaxis], right_values)
+        similarity_matrix = np.zeros((num_left, num_right))
+        for i in range(0, num_left, chunk_size):
+            left_chunk = left_df[left_col].iloc[i:i+chunk_size].astype(str).values
+            for j in range(0, num_right, chunk_size):
+                right_chunk = right_df[right_col].iloc[j:j+chunk_size].astype(str).values
+                chunk_sim = np.vectorize(similarity_func)(left_chunk[:, np.newaxis], right_chunk)
+                similarity_matrix[i:i+chunk_size, j:j+chunk_size] = chunk_sim
         similarity_matrices.append(similarity_matrix)
 
     # Combine similarity scores
@@ -47,31 +57,28 @@ def similarity_merge(
     threshold_mask = np.all([sim >= thresholds[col] for sim, col in zip(similarity_matrices, left_on)], axis=0)
     combined_similarity[~threshold_mask] = 0
 
-    # Get top matches
-    if limit:
-        top_k = min(limit, combined_similarity.shape[1])
-        top_indices = np.argpartition(-combined_similarity, top_k, axis=1)[:, :top_k]
-        row_indices = np.arange(combined_similarity.shape[0])[:, np.newaxis]
-        top_similarities = combined_similarity[row_indices, top_indices]
-        
-        # Flatten the indices and similarities
-        left_indices = np.repeat(np.arange(len(left_df)), top_k)
-        right_indices = top_indices.flatten()
-        similarities = top_similarities.flatten()
-        
-        # Remove pairs with zero similarity
-        mask = similarities > 0
-        left_indices = left_indices[mask]
-        right_indices = right_indices[mask]
-        similarities = similarities[mask]
-    else:
-        nonzero_indices = np.nonzero(combined_similarity)
-        left_indices, right_indices = nonzero_indices
-        similarities = combined_similarity[nonzero_indices]
+    # Convert to sparse matrix for memory efficiency
+    sparse_similarity = csr_matrix(combined_similarity)
 
-    # Create merged DataFrame
-    left_data = left_df.iloc[left_indices].reset_index(drop=True)
-    right_data = right_df.iloc[right_indices].reset_index(drop=True)
+    if limit:
+        matches = []
+        for i in range(num_left):
+            row = sparse_similarity.getrow(i)
+            top_k = min(limit, row.nnz)  # number of non-zero elements
+            if top_k > 0:
+                top_indices = np.argpartition(-row.data, top_k-1)[:top_k]
+                matches.extend([(i, row.indices[j], row.data[j]) for j in top_indices if row.data[j] > 0])
+        matches = sorted(matches, key=lambda x: x[2], reverse=True)
+    else:
+        # Use maximum bipartite matching for optimal 1-to-1 matching
+        graph = (sparse_similarity > 0).astype(int)
+        matching = maximum_bipartite_matching(graph, perm_type='column')
+        matches = [(i, j, combined_similarity[i, j]) for i, j in enumerate(matching) if j >= 0]
+
+    # Create result DataFrame
+    left_indices, right_indices, similarities = zip(*matches) if matches else ([], [], [])
+    left_data = left_df.iloc[list(left_indices)].reset_index(drop=True)
+    right_data = right_df.iloc[list(right_indices)].reset_index(drop=True)
     result_df = pd.concat([left_data, right_data], axis=1)
     result_df['similarity_score'] = similarities
 
@@ -81,15 +88,6 @@ def similarity_merge(
     return result_df
 
 def get_similarity_function(method: Union[str, Callable]) -> Callable:
-    """
-    Get the similarity function based on the specified method.
-
-    Args:
-        method (str or Callable): The similarity method to use
-
-    Returns:
-        Callable: The similarity function
-    """
     if callable(method):
         return method
     elif isinstance(method, str):
@@ -105,15 +103,3 @@ def get_similarity_function(method: Union[str, Callable]) -> Callable:
             raise ValueError(f"Unknown similarity method: {method}")
     else:
         raise ValueError("method must be a string or a callable")
-
-# Example usage:
-# left_df = pd.DataFrame(...)
-# right_df = pd.DataFrame(...)
-# result = similarity_merge(
-#     left_df, right_df,
-#     left_on=['name', 'address'],
-#     right_on=['company_name', 'company_address'],
-#     thresholds={'name': 0.8, 'address': 0.7},
-#     method='token_sort_ratio',
-#     limit=3
-# )
