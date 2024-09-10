@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from src.datasience_methods import __version__
 
 # Read the contents of your README file
 from pathlib import Path
@@ -18,7 +19,7 @@ else:
 
 setup(
     name="datasience_methods",
-    version=version,
+    version=__version__,
     author="Bratet",
     author_email="ahmedmrabet.002@gmail.com",
     description="A collection of useful data science methods",
